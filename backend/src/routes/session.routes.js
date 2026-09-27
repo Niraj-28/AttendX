@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const sessionController = require('../controllers/session.controller');
 const { authenticateToken, isFaculty } = require('../middleware/auth.middleware');
+const upload = require('../middleware/upload.middleware');
 const { 
   startSessionValidation, 
   sessionIdValidation 
@@ -13,10 +14,10 @@ router.use(authenticateToken, isFaculty);
 
 /**
  * @route   POST /api/sessions/start
- * @desc    Start a new attendance session
+ * @desc    Start a new attendance session with image upload
  * @access  Faculty only
  */
-router.post('/start', startSessionValidation, validate, sessionController.startSession);
+router.post('/start', upload.single('image'), startSessionValidation, validate, sessionController.startSession);
 
 /**
  * @route   POST /api/sessions/:id/stop

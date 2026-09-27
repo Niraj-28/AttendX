@@ -60,7 +60,9 @@ export const studentAPI = {
 };
 
 export const sessionAPI = {
-  start: (data) => api.post('/sessions/start', data),
+  start: (data) => api.post('/sessions/start', data, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
   stop: (id) => api.post(`/sessions/${id}/stop`),
   getAll: (params) => api.get('/sessions', { params }),
   getById: (id) => api.get(`/sessions/${id}`),

@@ -4,15 +4,53 @@ const Student = require('../models/Student.model');
 const Session = require('../models/Session.model');
 
 /**
- * Start new attendance session
+ * Start new attendance session with immediate face recognition
  * POST /api/sessions/start
  */
 const startSession = async (req, res, next) => {
+  let tempFilePath = null;
   const connection = await db.getConnection();
   
   try {
-    const { subject_id, class: className, stream, semester } = req.body;
+    console.log('=== START SESSION REQUEST ===');
+    console.log('req.body:', req.body);
+    console.log('req.file:', req.file ? { 
+      fieldname: req.file.fieldname,
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size
+    } : 'NO FILE');
+    
+    const { subject_id, class: className, stream, semester, session_type, session_date, start_time, end_time } = req.body;
     const facultyId = req.user.id;
+
+    console.log('Extracted fields:', {
+      subject_id,
+      className,
+      stream,
+      semester,
+      session_type,
+      session_date,
+      start_time,
+      end_time,
+      facultyId
+    });
+
+    // Validate required fields
+    if (!subject_id || !className || !stream || !semester || !session_type || !session_date || !start_time || !end_time) {
+      console.log('Validation failed: Missing required fields');
+      return errorResponse(res, 'All session fields are required', 400);
+    }
+
+    if (!req.file) {
+      console.log('Validation failed: No image file');
+      return errorResponse(res, 'Classroom image is required', 400);
+    }
+
+    // Validate time format and logic
+    if (start_time >= end_time) {
+      return errorResponse(res, 'Session end time must be after start time', 400);
+    }
 
     await connection.beginTransaction();
 
@@ -34,34 +72,56 @@ const startSession = async (req, res, next) => {
       return errorResponse(res, 'Subject not found or does not belong to you', 404);
     }
 
-    // Count total students in the class, stream, and semester
-    const [studentCounts] = await connection.query(
-      'SELECT COUNT(*) as count FROM students WHERE class = ? AND stream = ? AND semester = ? AND is_active = TRUE',
-      [className, stream, semester]
-    );
-
+    // Count total students
+    // If className is 'ALL', count all students in the stream and semester (for lectures)
+    // Otherwise, count students in specific class (for lab/tutorial)
+    let studentCountQuery, studentCountParams;
+    
+    if (className === 'ALL') {
+      studentCountQuery = 'SELECT COUNT(*) as count FROM students WHERE stream = ? AND semester = ? AND is_active = TRUE';
+      studentCountParams = [stream, semester];
+    } else {
+      studentCountQuery = 'SELECT COUNT(*) as count FROM students WHERE class = ? AND stream = ? AND semester = ? AND is_active = TRUE';
+      studentCountParams = [className, stream, semester];
+    }
+    
+    const [studentCounts] = await connection.query(studentCountQuery, studentCountParams);
     const totalStudents = studentCounts[0].count;
 
     if (totalStudents === 0) {
       await connection.rollback();
-      return errorResponse(res, `No students found in class ${className}, stream ${stream}, semester ${semester}`, 400);
+      const classInfo = className === 'ALL' ? 'all classes' : `class ${className}`;
+      return errorResponse(res, `No students found in ${classInfo}, stream ${stream}, semester ${semester}`, 400);
     }
+
+    // Combine session_date and start_time for start_time datetime field
+    const startDateTime = `${session_date} ${start_time}`;
+    const endDateTime = `${session_date} ${end_time}`;
 
     // Create session
     const [result] = await connection.query(
       `INSERT INTO sessions 
-        (faculty_id, subject_id, class, stream, semester, session_date, start_time, status, total_students) 
-      VALUES (?, ?, ?, ?, ?, CURDATE(), NOW(), 'active', ?)`,
-      [facultyId, subject_id, className, stream, semester, totalStudents]
+        (faculty_id, subject_id, class, stream, semester, session_type, session_date, start_time, end_time, status, total_students) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
+      [facultyId, subject_id, className, stream, semester, session_type, session_date, startDateTime, endDateTime, totalStudents]
     );
 
     const sessionId = result.insertId;
 
-    // Create attendance records for all students in the class, stream, and semester (default: absent)
-    const [students] = await connection.query(
-      'SELECT student_id FROM students WHERE class = ? AND stream = ? AND semester = ? AND is_active = TRUE',
-      [className, stream, semester]
-    );
+    // Create attendance records for all students
+    // If className is 'ALL', get all students in stream and semester (for lectures)
+    // Otherwise, get students in specific class (for lab/tutorial)
+    let studentQuery, studentParams;
+    
+    if (className === 'ALL') {
+      studentQuery = 'SELECT student_id FROM students WHERE stream = ? AND semester = ? AND is_active = TRUE';
+      studentParams = [stream, semester];
+    } else {
+      studentQuery = 'SELECT student_id FROM students WHERE class = ? AND stream = ? AND semester = ? AND is_active = TRUE';
+      studentParams = [className, stream, semester];
+    }
+    
+    const [students] = await connection.query(studentQuery, studentParams);
 
     if (students.length > 0) {
       const attendanceValues = students.map(s => [sessionId, s.student_id, 'absent']);
@@ -71,12 +131,139 @@ const startSession = async (req, res, next) => {
       );
     }
 
+    // === Face Recognition Processing ===
+    console.log('Processing attendance image for session:', sessionId);
+
+    // Save image temporarily for face detection
+    const fs = require('fs').promises;
+    const path = require('path');
+    const os = require('os');
+    tempFilePath = path.join(os.tmpdir(), `session_${sessionId}_${Date.now()}.jpg`);
+    await fs.writeFile(tempFilePath, req.file.buffer);
+
+    // Detect faces in the captured image (multi-face mode for attendance)
+    const { detectFaces } = require('../utils/faceRecognition');
+    const faceResult = await detectFaces(tempFilePath, false); // false = multi-face mode
+
+    if (!faceResult.success || faceResult.face_count === 0) {
+      await connection.rollback();
+      if (tempFilePath) await fs.unlink(tempFilePath).catch(() => {});
+      return errorResponse(res, faceResult.error || 'No faces detected in the image. Please ensure students are clearly visible.', 400);
+    }
+
+    console.log(`Detected ${faceResult.face_count} faces`);
+
+    // Upload image using unified storage (local or S3)
+    const { uploadFile, generateKey } = require('../utils/storageHelper');
+    const imageKey = generateKey(`session_${sessionId}_${Date.now()}.jpg`, 'attendance');
+    const imageUrl = await uploadFile(req.file.buffer, imageKey, req.file.mimetype);
+
+    // Update session with captured image URL
+    await connection.query(
+      'UPDATE sessions SET captured_image_url = ? WHERE session_id = ?',
+      [imageUrl, sessionId]
+    );
+
+    // Get all students in the class with face embeddings
+    const Student = require('../models/Student.model');
+    // Pass null for className if it's 'ALL' to get all students in the stream/semester
+    const classFilter = className === 'ALL' ? null : className;
+    const studentsWithEmbeddings = await Student.getAllWithEmbeddings(classFilter, stream, semester);
+
+    if (studentsWithEmbeddings.length === 0) {
+      console.log('Warning: No students with face embeddings found');
+      // Continue anyway - session is created, just no automatic attendance marking
+    } else {
+      console.log(`Matching against ${studentsWithEmbeddings.length} enrolled students`);
+
+      // Match each detected face against known students
+      const matchedStudents = [];
+      const matchedStudentIds = new Set();
+      const detectedEncodings = faceResult.face_encodings;
+
+      for (let i = 0; i < detectedEncodings.length; i++) {
+        const unknownEncoding = detectedEncodings[i];
+        const knownEncodings = studentsWithEmbeddings.map(s => s.face_embedding);
+
+        const { matchFaces } = require('../utils/faceRecognition');
+        const matchResult = await matchFaces(unknownEncoding, knownEncodings, 0.5);
+
+        let bestMatch = null;
+        let bestConfidence = 0;
+
+        if (matchResult.success && matchResult.all_similarities && matchResult.all_similarities.length > 0) {
+          const sortedMatches = matchResult.all_similarities
+            .map((similarity, index) => ({ similarity, index }))
+            .sort((a, b) => b.similarity - a.similarity);
+
+          const threshold = 0.5;
+          for (const match of sortedMatches) {
+            const student = studentsWithEmbeddings[match.index];
+            if (match.similarity >= threshold && !matchedStudentIds.has(student.student_id)) {
+              bestMatch = student;
+              bestConfidence = match.similarity;
+              break;
+            }
+          }
+        }
+
+        if (bestMatch && !matchedStudentIds.has(bestMatch.student_id)) {
+          matchedStudentIds.add(bestMatch.student_id);
+          matchedStudents.push({
+            student_id: bestMatch.student_id,
+            roll_no: bestMatch.roll_no,
+            name: bestMatch.name,
+            confidence: bestConfidence
+          });
+
+          // Mark attendance as present
+          await connection.query(
+            `UPDATE attendance 
+            SET status = 'present', 
+                marked_at = NOW(), 
+                confidence_score = ?, 
+                face_detected = TRUE,
+                updated_at = NOW()
+            WHERE session_id = ? AND student_id = ?`,
+            [bestConfidence, sessionId, bestMatch.student_id]
+          );
+
+          console.log(`Marked ${bestMatch.name} (${bestMatch.roll_no}) as present`);
+        }
+      }
+
+      console.log(`Total students marked present: ${matchedStudents.length}`);
+    }
+
+    // Update session statistics
+    await connection.query(
+      `UPDATE sessions s
+      SET 
+        s.present_count = (SELECT COUNT(*) FROM attendance WHERE session_id = ? AND status = 'present'),
+        s.absent_count = (SELECT COUNT(*) FROM attendance WHERE session_id = ? AND status = 'absent'),
+        s.updated_at = NOW()
+      WHERE s.session_id = ?`,
+      [sessionId, sessionId, sessionId]
+    );
+
     await connection.commit();
+
+    // Clean up temp file
+    if (tempFilePath) {
+      await fs.unlink(tempFilePath).catch(() => {});
+    }
 
     // Log action
     await db.query(
       'INSERT INTO audit_log (user_id, user_type, action, table_name, record_id, details) VALUES (?, ?, ?, ?, ?, ?)',
-      [facultyId, 'faculty', 'START_SESSION', 'sessions', sessionId, JSON.stringify({ class: className, stream, semester, subject_id })]
+      [facultyId, 'faculty', 'START_SESSION', 'sessions', sessionId, JSON.stringify({ 
+        class: className, 
+        stream, 
+        semester, 
+        subject_id,
+        session_type,
+        faces_detected: faceResult.face_count 
+      })]
     );
 
     // Fetch created session with details
@@ -88,15 +275,29 @@ const startSession = async (req, res, next) => {
       stream: stream,
       semester: semester,
       subject_id: subject_id,
+      session_type: session_type,
+      session_date: session_date,
+      start_time: start_time,
+      end_time: end_time,
       total_students: totalStudents,
-      start_time: session.start_time,
+      present_count: session.present_count,
+      absent_count: session.absent_count,
+      faces_detected: faceResult.face_count,
+      image_url: imageUrl,
       status: 'active',
       subject_name: session.subject_name,
       faculty_name: session.faculty_name
-    }, 'Session started successfully', 201);
+    }, 'Session started and attendance captured successfully', 201);
 
   } catch (error) {
     await connection.rollback();
+    
+    // Clean up temp file on error
+    if (tempFilePath) {
+      const fs = require('fs').promises;
+      await fs.unlink(tempFilePath).catch(() => {});
+    }
+    
     console.error('Start session error:', error);
     next(error);
   } finally {

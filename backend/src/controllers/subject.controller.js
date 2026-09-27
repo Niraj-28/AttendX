@@ -14,6 +14,7 @@ const getSubjects = async (req, res, next) => {
         subject_id,
         subject_code,
         subject_name,
+        stream,
         department,
         semester
       FROM subjects 
@@ -44,6 +45,7 @@ const getSubjectById = async (req, res, next) => {
         subject_id,
         subject_code,
         subject_name,
+        stream,
         faculty_id,
         department,
         semester

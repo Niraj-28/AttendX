@@ -120,7 +120,8 @@ const Students = () => {
       console.error('=== ERROR FETCHING STUDENTS ===');
       console.error('Error details:', error);
       console.error('Error response:', error.response);
-      toast.error('Failed to load students');
+      const errorMessage = error.response?.data?.message || error.message || 'Unable to load students. Please check your connection and try again.';
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
       console.log('=== FETCH COMPLETE ===');
@@ -207,35 +208,19 @@ const Students = () => {
   const handlePhotoChange = async (e) => {
     const file = e.target.files[0];
     if (file) {
-      // Check original file size
-      const originalSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-      
       if (file.size > 10 * 1024 * 1024) {
-        toast.error('File size should be less than 10MB');
+        toast.error('Image file size must be less than 10MB. Please select a smaller image.');
         return;
       }
 
       try {
-        // Show loading toast
-        const loadingToast = toast.info('Compressing image...', { autoClose: false });
-        
-        // Compress image
+        // Compress image silently (no notification)
         const compressedFile = await compressStudentPhoto(file);
-        const compressedSizeMB = (compressedFile.size / (1024 * 1024)).toFixed(2);
-        
-        // Close loading toast
-        toast.dismiss(loadingToast);
-        
-        // Show success message with size reduction
-        if (compressedFile.size < file.size) {
-          toast.success(`Image compressed: ${originalSizeMB}MB → ${compressedSizeMB}MB`);
-        }
-        
         setPhotoFile(compressedFile);
         setPhotoPreview(URL.createObjectURL(compressedFile));
       } catch (error) {
         console.error('Image compression error:', error);
-        toast.error('Failed to process image. Using original.');
+        toast.error('Failed to process image. Please try a different image or reduce its size.');
         // Fallback to original file if compression fails
         setPhotoFile(file);
         setPhotoPreview(URL.createObjectURL(file));
@@ -285,7 +270,8 @@ const Students = () => {
       fetchStudents();
     } catch (error) {
       console.error('Error deleting student:', error);
-      toast.error('Failed to delete student');
+      const errorMessage = error.response?.data?.message || error.message || 'Unable to delete student. This student may have attendance records.';
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }

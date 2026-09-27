@@ -42,7 +42,6 @@ const Sessions = () => {
   const [activeSession, setActiveSession] = useState(null);
   const [loading, setLoading] = useState(false);
   const [openStartDialog, setOpenStartDialog] = useState(false);
-  const [openCaptureDialog, setOpenCaptureDialog] = useState(false);
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -58,14 +57,83 @@ const Sessions = () => {
     class: ''
   });
   
-  // Form state for starting session
+  // Form state for starting session with attendance
   const [formData, setFormData] = useState({
     subject_id: '',
     stream: '',
     semester: '',
     class: '',
     session_type: 'lecture',
+    session_date: new Date().toISOString().split('T')[0], // Today's date
+    start_time: '',
+    end_time: '',
   });
+
+  // Filtered data based on selections
+  const [filteredSubjects, setFilteredSubjects] = useState([]);
+
+  // Get available semesters based on selected stream
+  const getAvailableSemesters = (stream) => {
+    // MCA: 2 years (4 semesters)
+    // B.Tech: 4 years (8 semesters)
+    // M.Tech: 2 years (4 semesters)
+    if (stream === 'MCA' || stream.includes('M.Tech')) {
+      return [1, 2, 3, 4];
+    } else if (stream.includes('B.Tech')) {
+      return [1, 2, 3, 4, 5, 6, 7, 8];
+    }
+    return [1, 2, 3, 4, 5, 6, 7, 8]; // Default all semesters
+  };
+
+  // Handle stream change - reset dependent fields
+  const handleStreamChange = (newStream) => {
+    setFormData({
+      ...formData,
+      stream: newStream,
+      semester: '', // Reset semester
+      subject_id: '', // Reset subject
+      class: newStream ? '' : '', // Reset class
+    });
+    setFilteredSubjects([]); // Clear filtered subjects
+  };
+
+  // Handle semester change - filter subjects
+  const handleSemesterChange = (newSemester) => {
+    setFormData({
+      ...formData,
+      semester: newSemester,
+      subject_id: '', // Reset subject when semester changes
+    });
+    
+    // Filter subjects based on stream and semester
+    if (formData.stream && newSemester) {
+      console.log('Filtering subjects for:', { stream: formData.stream, semester: newSemester });
+      console.log('All subjects:', subjects);
+      
+      const filtered = subjects.filter(
+        (subject) => {
+          const streamMatch = subject.stream === formData.stream;
+          const semesterMatch = subject.semester === parseInt(newSemester);
+          console.log(`Subject ${subject.subject_name}: stream=${subject.stream} (match: ${streamMatch}), semester=${subject.semester} (match: ${semesterMatch})`);
+          return streamMatch && semesterMatch;
+        }
+      );
+      
+      console.log('Filtered subjects:', filtered);
+      setFilteredSubjects(filtered);
+    } else {
+      setFilteredSubjects([]);
+    }
+  };
+
+  // Handle session type change - set class accordingly
+  const handleSessionTypeChange = (newType) => {
+    setFormData({
+      ...formData,
+      session_type: newType,
+      class: newType === 'lecture' ? 'ALL' : '', // Auto-set to ALL for lecture, empty for lab/tutorial
+    });
+  };
 
   useEffect(() => {
     fetchSessions();
@@ -79,7 +147,8 @@ const Sessions = () => {
       setSubjects(response.data.data || []);
     } catch (error) {
       console.error('Error fetching subjects:', error);
-      toast.error('Failed to load subjects');
+      const errorMessage = error.response?.data?.message || 'Unable to load subjects list';
+      toast.error(errorMessage);
       setSubjects([]);
     }
   };
@@ -115,7 +184,8 @@ const Sessions = () => {
       setSessions(response.data.data || []);
     } catch (error) {
       console.error('Error fetching sessions:', error);
-      toast.error('Failed to load sessions');
+      const errorMessage = error.response?.data?.message || error.message || 'Unable to load sessions. Please check your connection and try again.';
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -133,17 +203,71 @@ const Sessions = () => {
   };
 
   const handleStartSession = async () => {
+    console.log('=== START SESSION CLICKED ===');
+    console.log('imageFile:', imageFile);
+    console.log('imageFile type:', imageFile ? imageFile.type : 'null');
+    console.log('imageFile size:', imageFile ? imageFile.size : 'null');
+    console.log('formData:', formData);
+    
+    if (!imageFile) {
+      toast.error('Please upload a classroom image to capture attendance');
+      return;
+    }
+
+    if (!formData.start_time || !formData.end_time) {
+      toast.error('Please specify session start time and end time');
+      return;
+    }
+
+    // Validate end time is after start time
+    if (formData.start_time >= formData.end_time) {
+      toast.error('Session end time must be after start time');
+      return;
+    }
+
     try {
       setLoading(true);
-      await sessionAPI.start(formData);
-      toast.success('Session started successfully');
+      
+      // Create FormData for multipart upload
+      const data = new FormData();
+      data.append('subject_id', formData.subject_id);
+      data.append('stream', formData.stream);
+      data.append('semester', formData.semester);
+      data.append('class', formData.class || 'ALL'); // Ensure class is always set
+      data.append('session_type', formData.session_type);
+      data.append('session_date', formData.session_date);
+      data.append('start_time', formData.start_time);
+      data.append('end_time', formData.end_time);
+      data.append('image', imageFile);
+
+      console.log('=== SENDING TO API ===');
+      console.log('FormData entries:');
+      for (let pair of data.entries()) {
+        console.log(pair[0] + ':', pair[1]);
+      }
+
+      await sessionAPI.start(data);
+      toast.success('Session started and attendance captured successfully!');
       setOpenStartDialog(false);
-      setFormData({ subject_id: '', stream: '', semester: '', class: '', session_type: 'lecture' });
+      setFormData({ 
+        subject_id: '', 
+        stream: '', 
+        semester: '', 
+        class: '', 
+        session_type: 'lecture',
+        session_date: new Date().toISOString().split('T')[0],
+        start_time: '',
+        end_time: '',
+      });
+      setImageFile(null);
+      setImagePreview(null);
       fetchSessions();
       checkActiveSession();
     } catch (error) {
       console.error('Error starting session:', error);
-      toast.error(error.response?.data?.message || 'Failed to start session');
+      console.error('Error response:', error.response);
+      const errorMessage = error.response?.data?.message || error.response?.data?.error || 'Unable to start session. Please check all fields and try again.';
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -162,7 +286,8 @@ const Sessions = () => {
       fetchSessions();
     } catch (error) {
       console.error('Error stopping session:', error);
-      toast.error('Failed to stop session');
+      const errorMessage = error.response?.data?.message || 'Unable to stop session. Please try again.';
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -170,74 +295,39 @@ const Sessions = () => {
 
   const handleImageChange = async (e) => {
     const file = e.target.files[0];
+    console.log('=== IMAGE SELECTED ===');
+    console.log('File:', file);
+    console.log('File name:', file?.name);
+    console.log('File size:', file?.size);
+    console.log('File type:', file?.type);
+    
     if (file) {
-      // Check original file size
-      const originalSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-      
       if (file.size > 10 * 1024 * 1024) {
-        toast.error('File size should be less than 10MB');
+        toast.error('Image file size must be less than 10MB. Please select a smaller image.');
         return;
       }
 
       try {
-        // Show loading toast
-        const loadingToast = toast.info('Compressing image...', { autoClose: false });
-        
-        // Compress image for attendance (larger, better quality for multiple faces)
+        // Compress image silently (no notification)
+        console.log('Starting compression...');
         const compressedFile = await compressAttendancePhoto(file);
-        const compressedSizeMB = (compressedFile.size / (1024 * 1024)).toFixed(2);
-        
-        // Close loading toast
-        toast.dismiss(loadingToast);
-        
-        // Show success message with size reduction
-        if (compressedFile.size < file.size) {
-          toast.success(`Image compressed: ${originalSizeMB}MB → ${compressedSizeMB}MB`);
-        }
+        console.log('Compression complete:', {
+          originalSize: file.size,
+          compressedSize: compressedFile.size,
+          name: compressedFile.name,
+          type: compressedFile.type
+        });
         
         setImageFile(compressedFile);
         setImagePreview(URL.createObjectURL(compressedFile));
+        console.log('imageFile state updated');
       } catch (error) {
         console.error('Image compression error:', error);
-        toast.error('Failed to process image. Using original.');
+        toast.error('Failed to process image. Please try a different image or reduce its size.');
         // Fallback to original file if compression fails
         setImageFile(file);
         setImagePreview(URL.createObjectURL(file));
       }
-    }
-  };
-
-  const handleCaptureAttendance = async () => {
-    if (!imageFile) {
-      toast.error('Please select an image');
-      return;
-    }
-    
-    try {
-      setLoading(true);
-      setUploadProgress(10);
-      
-      const formData = new FormData();
-      formData.append('image', imageFile);
-      formData.append('session_id', activeSession.session_id);
-      
-      setUploadProgress(30);
-      await attendanceAPI.capture(formData);
-      
-      setUploadProgress(100);
-      toast.success('Attendance marked successfully!');
-      setOpenCaptureDialog(false);
-      setImageFile(null);
-      setImagePreview(null);
-      setUploadProgress(0);
-      fetchSessions();
-      checkActiveSession();
-    } catch (error) {
-      console.error('Error capturing attendance:', error);
-      toast.error(error.response?.data?.message || 'Failed to capture attendance');
-      setUploadProgress(0);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -311,15 +401,7 @@ const Sessions = () => {
                   </Typography>
                 </Box>
               </Box>
-              <Box display="flex" gap={1}>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  startIcon={<CloudUpload />}
-                  onClick={() => setOpenCaptureDialog(true)}
-                >
-                  Upload Image
-                </Button>
+              <Box>
                 <Button
                   variant="outlined"
                   color="error"
@@ -501,38 +583,24 @@ const Sessions = () => {
       </Card>
 
       {/* Start Session Dialog */}
-      <Dialog open={openStartDialog} onClose={() => setOpenStartDialog(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Start New Session</DialogTitle>
+      <Dialog open={openStartDialog} onClose={() => setOpenStartDialog(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Start New Session & Capture Attendance</DialogTitle>
         <DialogContent>
-          <Grid container spacing={2} sx={{ mt: 1 }}>
+          <Alert severity="info" sx={{ mb: 2, mt: 1 }}>
+            Fill in session details, select the session date and timings, then upload a classroom image to automatically mark attendance.
+          </Alert>
+          
+          <Grid container spacing={2}>
+            {/* Step 1: Stream Selection */}
             <Grid item xs={12}>
-              <TextField
-                fullWidth
-                select
-                label="Subject"
-                value={formData.subject_id}
-                onChange={(e) =>
-                  setFormData({ ...formData, subject_id: e.target.value })
-                }
-                required
-              >
-                {subjects.map((subject) => (
-                  <MenuItem key={subject.subject_id} value={subject.subject_id}>
-                    {subject.subject_name}
-                  </MenuItem>
-                ))}
-              </TextField>
-            </Grid>
-            <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
                 select
                 label="Stream"
                 value={formData.stream}
-                onChange={(e) =>
-                  setFormData({ ...formData, stream: e.target.value })
-                }
+                onChange={(e) => handleStreamChange(e.target.value)}
                 required
+                helperText="Step 1: Select your stream first"
               >
                 <MenuItem value="MCA">MCA</MenuItem>
                 <MenuItem value="B.Tech CSE">B.Tech CSE</MenuItem>
@@ -543,152 +611,224 @@ const Sessions = () => {
                 <MenuItem value="M.Tech Cyber Security">M.Tech Cyber Security</MenuItem>
               </TextField>
             </Grid>
+
+            {/* Step 2: Semester Selection (enabled after stream) */}
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
                 select
                 label="Semester"
                 value={formData.semester}
-                onChange={(e) =>
-                  setFormData({ ...formData, semester: e.target.value })
-                }
+                onChange={(e) => handleSemesterChange(e.target.value)}
                 required
+                disabled={!formData.stream}
+                helperText={!formData.stream ? "Select stream first" : "Step 2: Select semester"}
               >
-                {[1, 2, 3, 4, 5, 6, 7, 8].map((sem) => (
+                {formData.stream && getAvailableSemesters(formData.stream).map((sem) => (
                   <MenuItem key={sem} value={sem}>
                     Semester {sem}
                   </MenuItem>
                 ))}
               </TextField>
             </Grid>
+
+            {/* Step 3: Subject Selection (enabled after semester) */}
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
                 select
-                label="Class"
-                value={formData.class}
+                label="Subject"
+                value={formData.subject_id}
                 onChange={(e) =>
-                  setFormData({ ...formData, class: e.target.value })
+                  setFormData({ ...formData, subject_id: e.target.value })
                 }
                 required
+                disabled={!formData.semester || filteredSubjects.length === 0}
+                helperText={!formData.semester ? "Select semester first" : filteredSubjects.length === 0 ? "No subjects available" : "Step 3: Select subject"}
               >
-                <MenuItem value="A">Class A</MenuItem>
-                <MenuItem value="B">Class B</MenuItem>
-                <MenuItem value="C">Class C</MenuItem>
+                {filteredSubjects.map((subject) => (
+                  <MenuItem key={subject.subject_id} value={subject.subject_id}>
+                    {subject.subject_name} ({subject.subject_code})
+                  </MenuItem>
+                ))}
               </TextField>
             </Grid>
+
+            {/* Step 4: Session Type Selection */}
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
                 select
                 label="Session Type"
                 value={formData.session_type}
-                onChange={(e) =>
-                  setFormData({ ...formData, session_type: e.target.value })
-                }
+                onChange={(e) => handleSessionTypeChange(e.target.value)}
                 required
+                disabled={!formData.subject_id}
+                helperText={!formData.subject_id ? "Select subject first" : "Step 4: Lecture (all classes) or Lab (specific class)"}
               >
-                <MenuItem value="lecture">Lecture</MenuItem>
-                <MenuItem value="lab">Lab</MenuItem>
-                <MenuItem value="tutorial">Tutorial</MenuItem>
+                <MenuItem value="lecture">Lecture (All Classes Together)</MenuItem>
+                <MenuItem value="lab">Lab (Individual Class)</MenuItem>
+                <MenuItem value="tutorial">Tutorial (Individual Class)</MenuItem>
               </TextField>
+            </Grid>
+
+            {/* Step 5: Class Selection (only for Lab/Tutorial) */}
+            {formData.session_type !== 'lecture' && (
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  select
+                  label="Class"
+                  value={formData.class}
+                  onChange={(e) =>
+                    setFormData({ ...formData, class: e.target.value })
+                  }
+                  required
+                  helperText="Select which class for this lab/tutorial"
+                >
+                  <MenuItem value="A">Class A</MenuItem>
+                  <MenuItem value="B">Class B</MenuItem>
+                  <MenuItem value="C">Class C</MenuItem>
+                </TextField>
+              </Grid>
+            )}
+
+            {formData.session_type === 'lecture' && (
+              <Grid item xs={12} sm={6}>
+                <Alert severity="success" icon={<CheckCircle />}>
+                  All classes (A, B, C) will be combined
+                </Alert>
+              </Grid>
+            )}
+
+            {/* Session Date */}
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                type="date"
+                label="Session Date"
+                value={formData.session_date}
+                onChange={(e) =>
+                  setFormData({ ...formData, session_date: e.target.value })
+                }
+                InputLabelProps={{ shrink: true }}
+                required
+              />
+            </Grid>
+
+            {/* Session Start and End Time */}
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                type="time"
+                label="Session Start Time"
+                value={formData.start_time}
+                onChange={(e) =>
+                  setFormData({ ...formData, start_time: e.target.value })
+                }
+                InputLabelProps={{ shrink: true }}
+                required
+                helperText="When the session started"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                type="time"
+                label="Session End Time"
+                value={formData.end_time}
+                onChange={(e) =>
+                  setFormData({ ...formData, end_time: e.target.value })
+                }
+                InputLabelProps={{ shrink: true }}
+                required
+                helperText="When the session ended"
+              />
+            </Grid>
+
+            {/* Image Upload */}
+            <Grid item xs={12}>
+              <Typography variant="subtitle2" gutterBottom sx={{ mt: 1 }}>
+                Upload Classroom Image
+              </Typography>
+              {imagePreview ? (
+                <Box textAlign="center">
+                  <img
+                    src={imagePreview}
+                    alt="Preview"
+                    style={{ maxWidth: '100%', maxHeight: 300, borderRadius: 8 }}
+                  />
+                  <Button
+                    variant="outlined"
+                    component="label"
+                    startIcon={<CloudUpload />}
+                    sx={{ mt: 2 }}
+                  >
+                    Change Image
+                    <input
+                      type="file"
+                      hidden
+                      accept="image/*"
+                      onChange={handleImageChange}
+                    />
+                  </Button>
+                </Box>
+              ) : (
+                <Box
+                  textAlign="center"
+                  sx={{
+                    border: 2,
+                    borderStyle: 'dashed',
+                    borderColor: 'divider',
+                    borderRadius: 2,
+                    p: 4,
+                    cursor: 'pointer',
+                    '&:hover': { bgcolor: 'action.hover' },
+                  }}
+                >
+                  <Button
+                    variant="outlined"
+                    component="label"
+                    startIcon={<ImageIcon />}
+                    size="large"
+                  >
+                    Select Classroom Image
+                    <input
+                      type="file"
+                      hidden
+                      accept="image/*"
+                      onChange={handleImageChange}
+                    />
+                  </Button>
+                  <Typography variant="caption" display="block" sx={{ mt: 2 }}>
+                    Max 10MB, JPG or PNG • Image will be used to automatically detect and mark attendance
+                  </Typography>
+                </Box>
+              )}
             </Grid>
           </Grid>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setOpenStartDialog(false)}>Cancel</Button>
+          <Button onClick={() => {
+            setOpenStartDialog(false);
+            setImageFile(null);
+            setImagePreview(null);
+          }}>Cancel</Button>
           <Button
             variant="contained"
             onClick={handleStartSession}
-            disabled={loading || !formData.subject_id || !formData.stream || !formData.semester || !formData.class}
+            disabled={
+              loading || 
+              !formData.subject_id || 
+              !formData.stream || 
+              !formData.semester || 
+              (formData.session_type !== 'lecture' && !formData.class) || // Class required only for lab/tutorial
+              !formData.start_time || 
+              !formData.end_time || 
+              !imageFile
+            }
           >
             {loading ? <CircularProgress size={24} /> : 'Start Session'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Capture Attendance Dialog */}
-      <Dialog open={openCaptureDialog} onClose={() => setOpenCaptureDialog(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Capture Attendance</DialogTitle>
-        <DialogContent>
-          <Box sx={{ mt: 2 }}>
-            <Alert severity="info" sx={{ mb: 2 }}>
-              Upload a classroom image to automatically detect and mark attendance.
-            </Alert>
-            
-            {imagePreview ? (
-              <Box textAlign="center">
-                <img
-                  src={imagePreview}
-                  alt="Preview"
-                  style={{ maxWidth: '100%', maxHeight: 300, borderRadius: 8 }}
-                />
-                <Button
-                  variant="outlined"
-                  component="label"
-                  startIcon={<CloudUpload />}
-                  sx={{ mt: 2 }}
-                >
-                  Change Image
-                  <input
-                    type="file"
-                    hidden
-                    accept="image/*"
-                    onChange={handleImageChange}
-                  />
-                </Button>
-              </Box>
-            ) : (
-              <Box
-                textAlign="center"
-                sx={{
-                  border: 2,
-                  borderStyle: 'dashed',
-                  borderColor: 'divider',
-                  borderRadius: 2,
-                  p: 4,
-                  cursor: 'pointer',
-                  '&:hover': { bgcolor: 'action.hover' },
-                }}
-              >
-                <Button
-                  variant="outlined"
-                  component="label"
-                  startIcon={<ImageIcon />}
-                  size="large"
-                >
-                  Select Image
-                  <input
-                    type="file"
-                    hidden
-                    accept="image/*"
-                    onChange={handleImageChange}
-                  />
-                </Button>
-                <Typography variant="caption" display="block" sx={{ mt: 2 }}>
-                  Max 10MB, JPG or PNG
-                </Typography>
-              </Box>
-            )}
-            
-            {uploadProgress > 0 && (
-              <Box sx={{ mt: 2 }}>
-                <LinearProgress variant="determinate" value={uploadProgress} />
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                  Processing... {uploadProgress}%
-                </Typography>
-              </Box>
-            )}
-          </Box>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setOpenCaptureDialog(false)}>Cancel</Button>
-          <Button
-            variant="contained"
-            onClick={handleCaptureAttendance}
-            disabled={loading || !imageFile}
-          >
-            {loading ? <CircularProgress size={24} /> : 'Capture Attendance'}
           </Button>
         </DialogActions>
       </Dialog>

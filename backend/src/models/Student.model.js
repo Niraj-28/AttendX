@@ -48,9 +48,11 @@ class Student {
   /**
    * Get all students with face embeddings
    * @param {string} className - Optional class filter
+   * @param {string} stream - Optional stream filter
+   * @param {number} semester - Optional semester filter
    * @returns {Promise<Array>}
    */
-  static async getAllWithEmbeddings(className = null) {
+  static async getAllWithEmbeddings(className = null, stream = null, semester = null) {
     let query = `
       SELECT student_id, roll_no, name, face_embedding 
       FROM students 
@@ -62,6 +64,16 @@ class Student {
     if (className) {
       query += ' AND class = ?';
       params.push(className);
+    }
+
+    if (stream) {
+      query += ' AND stream = ?';
+      params.push(stream);
+    }
+
+    if (semester) {
+      query += ' AND semester = ?';
+      params.push(semester);
     }
 
     const [students] = await db.query(query, params);

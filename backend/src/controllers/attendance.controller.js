@@ -80,7 +80,7 @@ const captureAndMarkAttendance = async (req, res, next) => {
     );
 
     // Get all students in the class with face embeddings
-    const studentsWithEmbeddings = await Student.getAllWithEmbeddings(session.class);
+    const studentsWithEmbeddings = await Student.getAllWithEmbeddings(session.class, session.stream, session.semester);
 
     if (studentsWithEmbeddings.length === 0) {
       await connection.rollback();
