@@ -340,8 +340,8 @@ def main():
             image_path = input_data.get('image_path')
             # Lower default confidence to detect smaller faces
             confidence = input_data.get('confidence', 0.3)
-            # Default to single-face mode (strict) unless explicitly requesting multi-face
-            single_face_mode = input_data.get('single_face_mode', True)  # Changed default to True
+            # Default to multi-face mode for attendance, single-face for student photo enrollment
+            single_face_mode = input_data.get('single_face_mode', False)  # False = multi-face mode
             
             result = detect_faces_opencv(image_path, confidence, single_face_mode=single_face_mode)
             
