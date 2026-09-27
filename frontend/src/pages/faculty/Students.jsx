@@ -38,6 +38,7 @@ import {
 } from '@mui/icons-material';
 import { studentAPI } from '../../services/api';
 import { toast } from 'react-toastify';
+import { compressStudentPhoto } from '../../utils/imageCompressor';
 
 // Helper function to get full image URL
 const getImageUrl = (photoUrl) => {
@@ -203,15 +204,42 @@ const Students = () => {
     setPhotoPreview(null);
   };
 
-  const handlePhotoChange = (e) => {
+  const handlePhotoChange = async (e) => {
     const file = e.target.files[0];
     if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        toast.error('File size should be less than 5MB');
+      // Check original file size
+      const originalSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+      
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error('File size should be less than 10MB');
         return;
       }
-      setPhotoFile(file);
-      setPhotoPreview(URL.createObjectURL(file));
+
+      try {
+        // Show loading toast
+        const loadingToast = toast.info('Compressing image...', { autoClose: false });
+        
+        // Compress image
+        const compressedFile = await compressStudentPhoto(file);
+        const compressedSizeMB = (compressedFile.size / (1024 * 1024)).toFixed(2);
+        
+        // Close loading toast
+        toast.dismiss(loadingToast);
+        
+        // Show success message with size reduction
+        if (compressedFile.size < file.size) {
+          toast.success(`Image compressed: ${originalSizeMB}MB → ${compressedSizeMB}MB`);
+        }
+        
+        setPhotoFile(compressedFile);
+        setPhotoPreview(URL.createObjectURL(compressedFile));
+      } catch (error) {
+        console.error('Image compression error:', error);
+        toast.error('Failed to process image. Using original.');
+        // Fallback to original file if compression fails
+        setPhotoFile(file);
+        setPhotoPreview(URL.createObjectURL(file));
+      }
     }
   };
 

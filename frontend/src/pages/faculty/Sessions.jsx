@@ -35,6 +35,7 @@ import {
 import { sessionAPI, attendanceAPI, subjectAPI } from '../../services/api';
 import { toast } from 'react-toastify';
 import { format } from 'date-fns';
+import { compressAttendancePhoto } from '../../utils/imageCompressor';
 
 const Sessions = () => {
   const [sessions, setSessions] = useState([]);
@@ -167,15 +168,42 @@ const Sessions = () => {
     }
   };
 
-  const handleImageChange = (e) => {
+  const handleImageChange = async (e) => {
     const file = e.target.files[0];
     if (file) {
+      // Check original file size
+      const originalSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+      
       if (file.size > 10 * 1024 * 1024) {
         toast.error('File size should be less than 10MB');
         return;
       }
-      setImageFile(file);
-      setImagePreview(URL.createObjectURL(file));
+
+      try {
+        // Show loading toast
+        const loadingToast = toast.info('Compressing image...', { autoClose: false });
+        
+        // Compress image for attendance (larger, better quality for multiple faces)
+        const compressedFile = await compressAttendancePhoto(file);
+        const compressedSizeMB = (compressedFile.size / (1024 * 1024)).toFixed(2);
+        
+        // Close loading toast
+        toast.dismiss(loadingToast);
+        
+        // Show success message with size reduction
+        if (compressedFile.size < file.size) {
+          toast.success(`Image compressed: ${originalSizeMB}MB → ${compressedSizeMB}MB`);
+        }
+        
+        setImageFile(compressedFile);
+        setImagePreview(URL.createObjectURL(compressedFile));
+      } catch (error) {
+        console.error('Image compression error:', error);
+        toast.error('Failed to process image. Using original.');
+        // Fallback to original file if compression fails
+        setImageFile(file);
+        setImagePreview(URL.createObjectURL(file));
+      }
     }
   };
 
