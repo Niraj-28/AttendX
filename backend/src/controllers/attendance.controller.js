@@ -84,7 +84,32 @@ const captureAndMarkAttendance = async (req, res, next) => {
 
     if (studentsWithEmbeddings.length === 0) {
       await connection.rollback();
-      return errorResponse(res, 'No students with face embeddings found in this class', 400);
+      return errorResponse(res, 'No students with face embeddings found in this class. Please enroll students with their photos first.', 400);
+    }
+
+    // Get total number of students in the class
+    const [totalStudentsResult] = await connection.query(
+      'SELECT COUNT(*) as total FROM students WHERE class = ? AND stream = ? AND semester = ?',
+      [session.class, session.stream, session.semester]
+    );
+    const totalStudents = totalStudentsResult[0].total;
+    const enrollmentPercentage = (studentsWithEmbeddings.length / totalStudents) * 100;
+
+    console.log(`Total students in class: ${totalStudents}`);
+    console.log(`Students with face embeddings: ${studentsWithEmbeddings.length} (${enrollmentPercentage.toFixed(1)}%)`);
+
+    // Warn if less than 80% of students are enrolled
+    if (enrollmentPercentage < 80) {
+      console.warn(`⚠ WARNING: Only ${enrollmentPercentage.toFixed(1)}% of students have face embeddings enrolled!`);
+      console.warn(`⚠ This may result in many unmatched faces. Consider enrolling more students before taking attendance.`);
+      
+      await connection.rollback();
+      return errorResponse(res, 
+        `Only ${studentsWithEmbeddings.length} out of ${totalStudents} students (${enrollmentPercentage.toFixed(1)}%) have face embeddings enrolled. ` +
+        `Please enroll at least 80% of students with their photos before taking attendance. ` +
+        `Missing students will not be recognized and may be incorrectly marked absent.`,
+        400
+      );
     }
 
     console.log(`Matching against ${studentsWithEmbeddings.length} enrolled students`);
@@ -104,7 +129,7 @@ const captureAndMarkAttendance = async (req, res, next) => {
 
       // Find best match - now Python returns the best_match_index
       const { matchFaces } = require('../utils/faceRecognition');
-      const matchResult = await matchFaces(unknownEncoding, knownEncodings, 0.5); // Lowered from 0.6 to 0.5
+      const matchResult = await matchFaces(unknownEncoding, knownEncodings, 0.3); // Stricter threshold: 0.3 means similarity must be 0.7+ (1 - 0.3)
 
       console.log(`Match result for face ${i + 1}:`, JSON.stringify({
         success: matchResult.success,
@@ -129,19 +154,20 @@ const captureAndMarkAttendance = async (req, res, next) => {
         ).join(', '));
 
         // Find the best match that hasn't been matched yet
-        const threshold = 0.5;
+        // Strict threshold: 0.7 similarity required for a positive match
+        const threshold = 0.7;
         for (const match of sortedMatches) {
           const student = studentsWithEmbeddings[match.index];
           if (match.similarity >= threshold && !matchedStudentIds.has(student.student_id)) {
             bestMatch = student;
             bestConfidence = match.similarity;
             selectedIndex = match.index;
-            console.log(`Selected match: ${bestMatch.name} (${bestMatch.roll_no}) at index ${selectedIndex} with confidence ${bestConfidence.toFixed(4)}`);
+            console.log(`✓ Selected match: ${bestMatch.name} (${bestMatch.roll_no}) at index ${selectedIndex} with confidence ${bestConfidence.toFixed(4)}`);
             break;
           } else if (matchedStudentIds.has(student.student_id)) {
-            console.log(`Skipping ${student.roll_no} (already matched)`);
+            console.log(`⊗ Skipping ${student.roll_no} (already matched)`);
           } else {
-            console.log(`Skipping ${student.roll_no} (confidence ${match.similarity.toFixed(4)} below threshold ${threshold})`);
+            console.log(`✗ Rejecting ${student.roll_no} (confidence ${match.similarity.toFixed(4)} below threshold ${threshold})`);
           }
         }
       }

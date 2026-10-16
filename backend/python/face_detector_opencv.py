@@ -364,10 +364,14 @@ def main():
             
             logger.info(f"Matching against {len(known_encodings)} known faces")
             
-            best_match = False
-            best_confidence = 0.0
             best_match_index = -1
+            best_confidence = 0.0
             all_similarities = []
+            
+            # Calculate minimum similarity threshold from tolerance
+            # tolerance: 0.3 = require 0.7 similarity, 0.6 = require 0.4 similarity
+            min_similarity_threshold = 1.0 - tolerance
+            logger.info(f"Minimum similarity threshold: {min_similarity_threshold:.4f}")
             
             for i, known_encoding in enumerate(known_encodings):
                 # Parse JSON string if needed
@@ -375,30 +379,36 @@ def main():
                     try:
                         known_encoding = json.loads(known_encoding)
                     except:
+                        logger.warning(f"Failed to parse encoding at index {i}")
+                        all_similarities.append(0.0)
                         continue
                 
                 similarity = compare_faces(unknown_encoding, known_encoding)
                 all_similarities.append(similarity)
-                logger.info(f"Face {i}: similarity = {similarity:.4f}")
+                logger.info(f"Face {i}: similarity = {similarity:.4f} {'✓ above threshold' if similarity >= min_similarity_threshold else '✗ below threshold'}")
                 
-                if similarity > best_confidence:
+                # Track best match only if it meets the threshold
+                if similarity >= min_similarity_threshold and similarity > best_confidence:
                     best_confidence = similarity
                     best_match_index = i
-                
-                # If similarity is above threshold (1 - tolerance), it's a match
-                if similarity >= (1.0 - tolerance):
-                    best_match = True
+            
+            # Only mark as matched if we found a face above the threshold
+            matched = best_match_index >= 0
             
             result = {
                 'success': True,
-                'matched': best_match,
-                'confidence': best_confidence,
-                'best_match_index': best_match_index,
-                'threshold': 1.0 - tolerance,
+                'matched': matched,
+                'confidence': best_confidence if matched else 0.0,
+                'best_match_index': best_match_index if matched else -1,
+                'threshold': min_similarity_threshold,
                 'all_similarities': all_similarities  # Return all for debugging
             }
             
-            logger.info(f"Match result: matched={best_match}, best_index={best_match_index}, confidence={best_confidence:.4f}")
+            if matched:
+                logger.info(f"✓ Match found: index={best_match_index}, confidence={best_confidence:.4f}")
+            else:
+                logger.info(f"✗ No match found (best similarity: {max(all_similarities) if all_similarities else 0:.4f} below threshold {min_similarity_threshold:.4f})")
+            
             print(json.dumps(result))
             
         else:
