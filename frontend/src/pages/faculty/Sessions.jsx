@@ -31,11 +31,13 @@ import {
   Cancel,
   Image as ImageIcon,
   Search,
+  QrCode2,
 } from '@mui/icons-material';
 import { sessionAPI, attendanceAPI, subjectAPI } from '../../services/api';
 import { toast } from 'react-toastify';
 import { format } from 'date-fns';
 import { compressAttendancePhoto } from '../../utils/imageCompressor';
+import QRCameraCapture from '../../components/QRCameraCapture';
 
 const Sessions = () => {
   const [sessions, setSessions] = useState([]);
@@ -46,6 +48,10 @@ const Sessions = () => {
   const [imagePreview, setImagePreview] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [subjects, setSubjects] = useState([]);
+  
+  // QR Camera Capture state
+  const [showQRCapture, setShowQRCapture] = useState(false);
+  const [qrCaptureSessionId, setQrCaptureSessionId] = useState(null);
   
   // Filters for sessions list
   const [streamFilter, setStreamFilter] = useState('');
@@ -402,14 +408,27 @@ const Sessions = () => {
                 </Box>
               </Box>
               <Box>
-                <Button
-                  variant="outlined"
-                  color="error"
-                  startIcon={<StopCircle />}
-                  onClick={() => handleStopSession(activeSession.session_id)}
-                >
-                  Stop Session
-                </Button>
+                <Box display="flex" gap={2}>
+                  <Button
+                    variant="contained"
+                    color="success"
+                    startIcon={<QrCode2 />}
+                    onClick={() => {
+                      setQrCaptureSessionId(activeSession.session_id);
+                      setShowQRCapture(true);
+                    }}
+                  >
+                    📱 Capture from Phone
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    startIcon={<StopCircle />}
+                    onClick={() => handleStopSession(activeSession.session_id)}
+                  >
+                    Stop Session
+                  </Button>
+                </Box>
               </Box>
             </Box>
           </CardContent>
@@ -624,11 +643,15 @@ const Sessions = () => {
                 disabled={!formData.stream}
                 helperText={!formData.stream ? "Select stream first" : "Step 2: Select semester"}
               >
-                {formData.stream && getAvailableSemesters(formData.stream).map((sem) => (
-                  <MenuItem key={sem} value={sem}>
-                    Semester {sem}
-                  </MenuItem>
-                ))}
+                {formData.stream ? (
+                  getAvailableSemesters(formData.stream).map((sem) => (
+                    <MenuItem key={sem} value={sem}>
+                      Semester {sem}
+                    </MenuItem>
+                  ))
+                ) : (
+                  <MenuItem value="" disabled>Select stream first</MenuItem>
+                )}
               </TextField>
             </Grid>
 
@@ -646,11 +669,17 @@ const Sessions = () => {
                 disabled={!formData.semester || filteredSubjects.length === 0}
                 helperText={!formData.semester ? "Select semester first" : filteredSubjects.length === 0 ? "No subjects available" : "Step 3: Select subject"}
               >
-                {filteredSubjects.map((subject) => (
-                  <MenuItem key={subject.subject_id} value={subject.subject_id}>
-                    {subject.subject_name} ({subject.subject_code})
+                {filteredSubjects.length > 0 ? (
+                  filteredSubjects.map((subject) => (
+                    <MenuItem key={subject.subject_id} value={subject.subject_id}>
+                      {subject.subject_name} ({subject.subject_code})
+                    </MenuItem>
+                  ))
+                ) : (
+                  <MenuItem value="" disabled>
+                    {!formData.semester ? "Select semester first" : "No subjects available for this combination"}
                   </MenuItem>
-                ))}
+                )}
               </TextField>
             </Grid>
 
@@ -751,6 +780,46 @@ const Sessions = () => {
               <Typography variant="subtitle2" gutterBottom sx={{ mt: 1 }}>
                 Upload Classroom Image
               </Typography>
+              
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Choose how to capture attendance:
+              </Typography>
+              
+              <Grid container spacing={2} sx={{ mb: 2 }}>
+                <Grid item xs={12} sm={6}>
+                  <Button
+                    variant="outlined"
+                    component="label"
+                    startIcon={<ImageIcon />}
+                    fullWidth
+                    sx={{ py: 1.5 }}
+                  >
+                    Upload from Computer
+                    <input
+                      type="file"
+                      hidden
+                      accept="image/*"
+                      onChange={handleImageChange}
+                    />
+                  </Button>
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Button
+                    variant="outlined"
+                    startIcon={<QrCode2 />}
+                    fullWidth
+                    sx={{ py: 1.5 }}
+                    color="success"
+                    onClick={() => {
+                      // For now, show info about phone capture during session
+                      toast.info('Phone capture will be available after starting the session');
+                    }}
+                  >
+                    Capture from Phone (Coming Soon)
+                  </Button>
+                </Grid>
+              </Grid>
+              
               {imagePreview ? (
                 <Box textAlign="center">
                   <img
@@ -781,26 +850,11 @@ const Sessions = () => {
                     borderStyle: 'dashed',
                     borderColor: 'divider',
                     borderRadius: 2,
-                    p: 4,
-                    cursor: 'pointer',
-                    '&:hover': { bgcolor: 'action.hover' },
+                    p: 3,
                   }}
                 >
-                  <Button
-                    variant="outlined"
-                    component="label"
-                    startIcon={<ImageIcon />}
-                    size="large"
-                  >
-                    Select Classroom Image
-                    <input
-                      type="file"
-                      hidden
-                      accept="image/*"
-                      onChange={handleImageChange}
-                    />
-                  </Button>
-                  <Typography variant="caption" display="block" sx={{ mt: 2 }}>
+                  <ImageIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 1 }} />
+                  <Typography variant="caption" display="block" color="text.secondary">
                     Max 10MB, JPG or PNG • Image will be used to automatically detect and mark attendance
                   </Typography>
                 </Box>
@@ -831,6 +885,39 @@ const Sessions = () => {
             {loading ? <CircularProgress size={24} /> : 'Start Session'}
           </Button>
         </DialogActions>
+      </Dialog>
+
+      {/* QR Camera Capture Modal */}
+      <Dialog
+        open={showQRCapture}
+        onClose={() => {
+          setShowQRCapture(false);
+          setQrCaptureSessionId(null);
+        }}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          📱 Capture Attendance from Phone
+        </DialogTitle>
+        <DialogContent>
+          {qrCaptureSessionId && (
+            <QRCameraCapture
+              sessionId={qrCaptureSessionId}
+              onImageReceived={(data) => {
+                console.log('Image received:', data);
+                // Image will be processed when faculty clicks "Process Attendance" button
+              }}
+              onCancel={() => {
+                setShowQRCapture(false);
+                setQrCaptureSessionId(null);
+                // Refresh sessions after capturing
+                fetchSessions();
+                checkActiveSession();
+              }}
+            />
+          )}
+        </DialogContent>
       </Dialog>
     </Box>
   );

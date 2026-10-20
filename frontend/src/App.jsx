@@ -11,6 +11,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import Login from './pages/Login';
 import FacultyDashboard from './pages/FacultyDashboard';
 import StudentPortal from './pages/StudentPortal';
+import PhoneCapture from './pages/PhoneCapture';
 
 const theme = createTheme({
   palette: {
@@ -84,6 +85,9 @@ function App() {
         <Router>
           <Routes>
             <Route path="/login" element={<Login />} />
+            
+            {/* Phone Camera Capture - Public route (uses token in URL) */}
+            <Route path="/capture/:token" element={<PhoneCapture />} />
             
             <Route 
               path="/faculty/*" 

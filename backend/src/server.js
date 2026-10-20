@@ -4,21 +4,57 @@ const dotenv = require('dotenv');
 const morgan = require('morgan');
 const helmet = require('helmet');
 const path = require('path');
+const http = require('http');
+const { Server } = require('socket.io');
 const { errorHandler, notFoundHandler } = require('./middleware/error.middleware');
 
 // Load environment variables
 dotenv.config();
 
 const app = express();
+const server = http.createServer(app);
 
 // Security middleware
 app.use(helmet());
 
 // CORS configuration
-app.use(cors({
+const corsOptions = {
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true
-}));
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+};
+app.use(cors(corsOptions));
+
+// Socket.IO setup with CORS
+const io = new Server(server, {
+  cors: corsOptions,
+  transports: ['websocket', 'polling']
+});
+
+// Make io globally available for controllers
+global.io = io;
+
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+  console.log(`🔌 Socket connected: ${socket.id}`);
+
+  // Faculty joins session room to receive real-time updates
+  socket.on('join-session', (sessionId) => {
+    socket.join(`session-${sessionId}`);
+    console.log(`📱 Socket ${socket.id} joined session-${sessionId}`);
+  });
+
+  // Faculty leaves session room
+  socket.on('leave-session', (sessionId) => {
+    socket.leave(`session-${sessionId}`);
+    console.log(`📱 Socket ${socket.id} left session-${sessionId}`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`🔌 Socket disconnected: ${socket.id}`);
+  });
+});
 
 // Body parsing middleware
 app.use(express.json());
@@ -66,6 +102,7 @@ app.use('/api/students', require('./routes/student.routes'));
 app.use('/api/sessions', require('./routes/session.routes'));
 app.use('/api/attendance', require('./routes/attendance.routes'));
 app.use('/api/subjects', require('./routes/subject.routes'));
+app.use('/api/phone-capture', require('./routes/phone-capture.routes')); // NEW: Phone camera capture
 
 // 404 handler
 app.use(notFoundHandler);
@@ -75,11 +112,12 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log('╔════════════════════════════════════════╗');
   console.log('║   🚀 AttendX Backend Server Started   ║');
   console.log('╚════════════════════════════════════════╝');
   console.log(`\n📡 Server: http://localhost:${PORT}`);
+  console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
   console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`⏰ Started at: ${new Date().toLocaleString()}\n`);
 });
@@ -95,4 +133,4 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-module.exports = app;
+module.exports = { app, server, io };
