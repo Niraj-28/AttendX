@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import QRCode from 'qrcode.react';
+import { QRCodeSVG } from 'qrcode.react';
 import { io } from 'socket.io-client';
 import { Camera, RefreshCw, Check, X, Clock, Smartphone, Loader } from 'lucide-react';
 import './QRCameraCapture.css';
@@ -215,7 +215,7 @@ const QRCameraCapture = ({ sessionId, onImageReceived, onCancel }) => {
               <div className="qr-code-container">
                 <div className="qr-code-wrapper">
                   {qrUrl && (
-                    <QRCode 
+                    <QRCodeSVG 
                       value={qrUrl} 
                       size={280}
                       level="H"
