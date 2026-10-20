@@ -351,7 +351,7 @@ We need 2 buckets: one for images, one for frontend.
 
 3. Click **Launch instance**
 4. Wait for **Instance State** = Running (2-3 minutes)
-
+   
 #### Step 4.2: Get Public IP
 
 1. Click on instance `attendx-backend`
@@ -1006,7 +1006,7 @@ Open: `https://d111111abcdef8.cloudfront.net`
 ### **Your Live URLs:**
 
 - **Frontend**: 
-  - S3: `http://attendx-frontend-nb-2026.s3-website-us-east-1.amazonaws.com`
+  - S3: `http://attendx-frontend-nk-2026.s3-website-us-east-1.amazonaws.com`
   - CloudFront (if setup): `https://d111111abcdef8.cloudfront.net`
   
 - **Backend API**: `http://3.85.123.45/api`
